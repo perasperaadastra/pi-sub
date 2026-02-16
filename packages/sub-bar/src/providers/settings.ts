@@ -14,6 +14,7 @@ import type {
 	CodexProviderSettings,
 	KiroProviderSettings,
 	ZaiProviderSettings,
+	GwdgProviderSettings,
 } from "../settings-types.js";
 
 function buildBaseProviderItems(ps: BaseProviderSettings): SettingItem[] {
@@ -225,6 +226,40 @@ export function buildProviderSettingsItems(settings: Settings, provider: Provide
 		);
 	}
 
+	if (provider === "gwdg") {
+		const gwdgSettings = ps as GwdgProviderSettings;
+		items.push(
+			{
+				id: "showMinute",
+				label: "Show Minute Window",
+				currentValue: gwdgSettings.windows.showMinute ? "on" : "off",
+				values: ["on", "off"],
+				description: "Show the per-minute rate limit window.",
+			},
+			{
+				id: "showHour",
+				label: "Show Hour Window",
+				currentValue: gwdgSettings.windows.showHour ? "on" : "off",
+				values: ["on", "off"],
+				description: "Show the hourly rate limit window.",
+			},
+			{
+				id: "showDay",
+				label: "Show Day Window",
+				currentValue: gwdgSettings.windows.showDay ? "on" : "off",
+				values: ["on", "off"],
+				description: "Show the daily rate limit window.",
+			},
+			{
+				id: "showMonth",
+				label: "Show Month Window",
+				currentValue: gwdgSettings.windows.showMonth ? "on" : "off",
+				values: ["on", "off"],
+				description: "Show the monthly rate limit window.",
+			},
+		);
+	}
+
 	return items;
 }
 
@@ -351,6 +386,24 @@ export function applyProviderSettingsChange(
 				break;
 			case "showMonthly":
 				zaiSettings.windows.showMonthly = value === "on";
+				break;
+		}
+	}
+
+	if (provider === "gwdg") {
+		const gwdgSettings = ps as GwdgProviderSettings;
+		switch (id) {
+			case "showMinute":
+				gwdgSettings.windows.showMinute = value === "on";
+				break;
+			case "showHour":
+				gwdgSettings.windows.showHour = value === "on";
+				break;
+			case "showDay":
+				gwdgSettings.windows.showDay = value === "on";
+				break;
+			case "showMonth":
+				gwdgSettings.windows.showMonth = value === "on";
 				break;
 		}
 	}

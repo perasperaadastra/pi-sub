@@ -254,6 +254,15 @@ export interface ZaiProviderSettings extends BaseProviderSettings {
 	};
 }
 
+export interface GwdgProviderSettings extends BaseProviderSettings {
+	windows: {
+		showMinute: boolean;
+		showHour: boolean;
+		showDay: boolean;
+		showMonth: boolean;
+	};
+}
+
 export interface ProviderSettingsMap {
 	anthropic: AnthropicProviderSettings;
 	copilot: CopilotProviderSettings;
@@ -262,6 +271,7 @@ export interface ProviderSettingsMap {
 	codex: CodexProviderSettings;
 	kiro: KiroProviderSettings;
 	zai: ZaiProviderSettings;
+	gwdg: GwdgProviderSettings;
 }
 
 export type { BehaviorSettings, CoreSettings } from "@marckrenn/pi-sub-shared";
@@ -462,6 +472,15 @@ export function getDefaultSettings(): Settings {
 				windows: {
 					showTokens: true,
 					showMonthly: true,
+				},
+			},
+			gwdg: {
+				showStatus: true,
+				windows: {
+					showMinute: true,
+					showHour: true,
+					showDay: true,
+					showMonth: true,
 				},
 			},
 		},

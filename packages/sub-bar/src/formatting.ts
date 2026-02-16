@@ -559,6 +559,9 @@ export function formatUsageWindowParts(
 		} else if (isCodex) {
 			const suffix = showUsageLabels ? " rem." : "";
 			pctStr = applyBaseTextColor(theme, usageLabelColor, `${displayPct}%${suffix}`);
+		} else if (usage?.provider === "gwdg") {
+			const suffix = showUsageLabels ? " used" : "";
+			pctStr = applyBaseTextColor(theme, usageLabelColor, `${usedPct}%${suffix}`);
 		} else {
 			const suffix = showUsageLabels ? " used" : "";
 			pctStr = applyBaseTextColor(theme, usageLabelColor, `${usedPct}%${suffix}`);

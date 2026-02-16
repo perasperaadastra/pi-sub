@@ -165,6 +165,16 @@ const copilotExtras: ProviderMetadata["getExtras"] = (usage, settings, modelId) 
 	return extras;
 };
 
+const gwdgWindowVisible: ProviderMetadata["isWindowVisible"] = (_usage, window, settings, _model) => {
+	if (!settings) return true;
+	const ps = settings.providers.gwdg;
+	if (window.label === "1m") return ps.windows.showMinute;
+	if (window.label === "1h") return ps.windows.showHour;
+	if (window.label === "Day") return ps.windows.showDay;
+	if (window.label === "Month") return ps.windows.showMonth;
+	return true;
+};
+
 export const PROVIDER_METADATA: Record<ProviderName, ProviderMetadata> = {
 	anthropic: {
 		...BASE_METADATA.anthropic,
@@ -195,5 +205,9 @@ export const PROVIDER_METADATA: Record<ProviderName, ProviderMetadata> = {
 	zai: {
 		...BASE_METADATA.zai,
 		isWindowVisible: zaiWindowVisible,
+	},
+	gwdg: {
+		...BASE_METADATA.gwdg,
+		isWindowVisible: gwdgWindowVisible,
 	},
 };

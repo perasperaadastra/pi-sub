@@ -81,6 +81,9 @@ export default function createExtension(pi: ExtensionAPI, deps: Dependencies = c
 	}
 	subCoreGlobal.__piSubCore = { active: true };
 
+	// Make pi available to providers that need it (e.g., GWDG for EventBus access)
+	deps.pi = pi;
+
 	let usageRefreshInterval: ReturnType<typeof setInterval> | undefined;
 	let statusRefreshInterval: ReturnType<typeof setInterval> | undefined;
 	let lastContext: ExtensionContext | undefined;

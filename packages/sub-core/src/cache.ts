@@ -211,7 +211,7 @@ export function readCache(): Cache {
 /**
  * Write cache to disk
  */
-function writeCache(cache: Cache): void {
+export function writeCache(cache: Cache): void {
 	migrateLegacyCache();
 	const storage = getStorage();
 	try {

@@ -28,6 +28,21 @@ export function formatReset(date: Date): string {
 }
 
 /**
+ * Format seconds into a human-readable duration.
+ */
+export function formatDuration(seconds: number): string {
+	if (seconds < 60) return `${seconds}s`;
+	if (seconds < 3600) {
+		const mins = Math.floor(seconds / 60);
+		const secs = seconds % 60;
+		return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+	}
+	const hours = Math.floor(seconds / 3600);
+	const mins = Math.floor((seconds % 3600) / 60);
+	return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+/**
  * Format elapsed time since a timestamp (milliseconds)
  */
 export function formatElapsedSince(timestamp: number): string {

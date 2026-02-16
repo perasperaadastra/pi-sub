@@ -30,4 +30,5 @@ export interface Dependencies {
 	execFileSync: (file: string, args: string[], options?: ExecFileSyncOptionsWithStringEncoding) => string;
 	homedir: () => string;
 	env: NodeJS.ProcessEnv;
+	pi?: any;
 }
