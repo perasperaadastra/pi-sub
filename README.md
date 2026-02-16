@@ -2,6 +2,14 @@
 
 Monorepo for the `sub-*` extension ecosystem: a shared usage core (`sub-core`), UI clients (like `sub-bar`), and headless consumers that subscribe to usage updates.
 
+## install gwdg-fork
+
+```bash
+pi install https://github.com/perasperaadastra/pi-sub/
+ln -s "${PI_CODING_AGENT_DIR:-~/.pi/agent}/git/github.com/perasperaadastra/pi-sub/packages/sub-core" "${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/sub-core"
+ln -s "${PI_CODING_AGENT_DIR:-~/.pi/agent}/git/github.com/perasperaadastra/pi-sub/packages/sub-bar" "${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/sub-bar"
+```
+
 ## Overview
 
 - **sub-core**: fetches usage + status, manages cache/locks, owns provider selection, and emits updates via `pi.events`.
@@ -189,5 +197,3 @@ npm run check -w @marckrenn/pi-sub-shared
 npm run test -w @marckrenn/pi-sub-core
 npm run test -w @marckrenn/pi-sub-bar
 ```
-
-
