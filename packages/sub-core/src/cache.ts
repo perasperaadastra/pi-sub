@@ -412,6 +412,7 @@ export async function fetchWithCache<T extends { usage?: UsageSnapshot; status?:
 			const previous = cache[provider];
 			const statusFetchedAt = result.statusFetchedAt ?? (result.status ? fetchedAt : previous?.statusFetchedAt);
 			cache[provider] = {
+				...previous,
 				fetchedAt,
 				statusFetchedAt,
 				usage: result.usage,
@@ -452,6 +453,7 @@ export async function updateCacheStatus(
 		const entry = cache[provider];
 		const statusFetchedAt = options?.statusFetchedAt ?? Date.now();
 		cache[provider] = {
+			...entry,
 			fetchedAt: entry?.fetchedAt ?? 0,
 			statusFetchedAt,
 			usage: entry?.usage,

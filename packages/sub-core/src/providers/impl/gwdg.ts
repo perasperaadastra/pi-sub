@@ -7,6 +7,7 @@ import { BaseProvider } from "../../provider.js";
 import { formatReset } from "../../utils.js";
 import { readCache, writeCache } from "../../cache.js";
 import type { CacheEntry } from "../../cache.js";
+import { fetchFailed } from "../../errors.js";
 
 const PI_SUB_GWDG_DEBUG = process.env.PI_SUB_GWDG_DEBUG === "1";
 
@@ -67,7 +68,9 @@ function calculateResetSeconds(windowKey: keyof typeof WINDOW_SECONDS): number {
 	return windowDuration - secondsIntoWindow;
 }
 
-function calculateResetFields(windowKey: keyof typeof WINDOW_SECONDS): { resetDescription: string; resetAt: string } | undefined {
+function calculateResetFields(
+	windowKey: keyof typeof WINDOW_SECONDS
+): { resetDescription: string; resetAt: string } | undefined {
 	const resetSeconds = calculateResetSeconds(windowKey);
 	if (resetSeconds <= 0) {
 		return undefined;
@@ -155,17 +158,22 @@ function buildRateWindows(data: GwdgUsageData): RateWindow[] {
 	return windows;
 }
 
-// Global singleton storage for GWDG usage data
-// Shared across all GwdgProvider instances
-let globalLastUsageData: GwdgUsageData | null = null;
+// Event subscription tracking - ensures we only subscribe once per process
 let globalEventUnsubscribe: (() => void) | null = null;
 let globalSubscribed = false;
 
 function ensureGlobalSubscription(deps: Dependencies): void {
-	debug("ensureGlobalSubscription - subscribed:", globalSubscribed, "deps.pi:", !!deps.pi);
-	if (globalSubscribed || !deps.pi) {
-		debug("ensureGlobalSubscription - early return, globalSubscribed:", globalSubscribed, "deps.pi:", !!deps.pi);
+	debug("ensureGlobalSubscription - subscribed:", globalSubscribed, "deps.pi:", !!deps?.pi);
+	if (globalSubscribed || !deps?.pi) {
+		debug("ensureGlobalSubscription - early return, globalSubscribed:", globalSubscribed, "deps.pi:", !!deps?.pi);
 		return;
+	}
+
+	// Prevent overwriting existing unsubscribe function (race condition protection)
+	if (globalEventUnsubscribe) {
+		debug("ensureGlobalSubscription - cleaning up existing subscription before creating new one");
+		globalEventUnsubscribe();
+		globalEventUnsubscribe = null;
 	}
 
 	debug("ensureGlobalSubscription - subscribing to gwdg:usage:update");
@@ -173,47 +181,67 @@ function ensureGlobalSubscription(deps: Dependencies): void {
 	// Subscribe to usage updates from pi-gwdg
 	globalEventUnsubscribe = deps.pi.events.on("gwdg:usage:update", (data: unknown) => {
 		debug("GWDG EVENT RECEIVED!");
-		globalLastUsageData = data as GwdgUsageData;
-		debug("Received event data:", JSON.stringify(globalLastUsageData, null, 2));
+		const gwdgUsageData = data as GwdgUsageData;
+		debug("Received event data:", JSON.stringify(gwdgUsageData, null, 2));
 
 		// Update the cache with the received data so it persists across session/model changes
 		try {
-			const cache = readCache();
-			debug("Current cache before update:", JSON.stringify(cache.gwdg, null, 2));
-			const windows = buildRateWindows(globalLastUsageData);
+			const windows = buildRateWindows(gwdgUsageData);
 			debug("Built windows:", JSON.stringify(windows, null, 2));
 
-			// Create usage snapshot
-			const now = Date.now();
+			const cache = readCache();
+			debug("Initial cache:", JSON.stringify(cache.gwdg, null, 2));
+
 			const usage: UsageSnapshot = {
 				provider: "gwdg",
 				displayName: "GWDG",
 				windows,
-				lastSuccessAt: now,
+				lastSuccessAt: Date.now(),
 			};
 
-			// Update cache entry - store raw rateLimits for rollover checks when reading from cache
-			const existingEntry = cache.gwdg;
-			const entry: CacheEntry & { rateLimitsData?: { rateLimits: GwdgUsageData["rateLimits"]; timestamp: number } } = {
-				fetchedAt: now,
+			const existingCacheEntry = cache.gwdg;
+			const newCacheEntry: CacheEntry & {
+				gwdgUsageData: GwdgUsageData;
+			} = {
+				fetchedAt: gwdgUsageData.timestamp,
+				status: existingCacheEntry?.status,
 				usage,
-				status: existingEntry?.status,
-				rateLimitsData: {
-					rateLimits: globalLastUsageData.rateLimits,
-					timestamp: globalLastUsageData.timestamp,
-				},
+				gwdgUsageData: gwdgUsageData
 			};
+			cache.gwdg = newCacheEntry;
+			debug("Updated cache:", JSON.stringify(cache.gwdg, null, 2));
 
-			cache.gwdg = entry;
 			writeCache(cache);
-			debug("Cache updated with usage data");
-			debug("Cache after update:", JSON.stringify(cache.gwdg, null, 2));
+			debug("Cache updated");
+
 		} catch (error) {
 			console.warn("[GWDG Provider] Failed to update cache:", error);
 		}
 	});
 	globalSubscribed = true;
 	debug("Successfully subscribed to gwdg:usage:update");
+}
+
+/**
+ * Unsubscribe from GWDG events and clean up resources
+ */
+export function unsubscribeGlobalGwdg(): void {
+	debug("unsubscribeGlobalGwdg called");
+	if (globalEventUnsubscribe) {
+		debug("Unsubscribing from gwdg:usage:update");
+		globalEventUnsubscribe();
+		globalEventUnsubscribe = null;
+		globalSubscribed = false;
+		debug("Successfully unsubscribed from gwdg:usage:update");
+	} else {
+		debug("No active subscription to unsubscribe from");
+	}
+}
+
+function getGwdgCache() {
+	debug("getGwdgCache called");
+	const cache = readCache();
+	return cache.gwdg as CacheEntry & {gwdgUsageData: GwdgUsageData} | undefined;
 }
 
 export class GwdgProvider extends BaseProvider {
@@ -227,9 +255,16 @@ export class GwdgProvider extends BaseProvider {
 		ensureGlobalSubscription(deps);
 	}
 
+	/**
+	 * Dispose of the provider and clean up resources
+	 */
+	dispose(): void {
+		unsubscribeGlobalGwdg();
+	}
+
 	hasCredentials(_deps: Dependencies): boolean {
 		// GWDG doesn't require explicit credentials check
-		// The extension handles auth via GWDG_API_KEY env var
+		// The pi-gwdg extension handles auth via PI_GWDG_API_KEY env var
 		return true;
 	}
 
@@ -237,37 +272,23 @@ export class GwdgProvider extends BaseProvider {
 		// Ensure we're subscribed to events
 		this.ensureSubscribed(deps);
 
-		debug("fetchUsage called - globalLastUsageData:", globalLastUsageData ? "EXISTS" : "NULL");
+		debug("fetchUsage called");
 
-		// Try global state first (most recent from live event)
-		if (globalLastUsageData) {
-			debug("fetchUsage - using globalLastUsageData");
-			const windows = buildRateWindows(globalLastUsageData);
-			const windowsWithLiveReset = recalculateResetTimes(windows);
-			debug("fetchUsage - built windows with live reset:", JSON.stringify(windowsWithLiveReset, null, 2));
-			return this.snapshot({ windows: windowsWithLiveReset });
-		}
+		const gwdgCache = getGwdgCache();
+		debug("gwdgCache:", JSON.stringify(gwdgCache, null, 2));
 
-		// Fall back to cache if no live data
-		debug("fetchUsage - no global data, checking cache");
-		const cache = readCache();
-		const gwdgCache = cache.gwdg as (CacheEntry & { rateLimitsData?: { rateLimits: GwdgUsageData["rateLimits"]; timestamp: number } }) | undefined;
-
-		if (gwdgCache?.rateLimitsData) {
-			debug("fetchUsage - using cached rateLimitsData to rebuild windows with rollover check");
-			const cachedData: GwdgUsageData = {
-				timestamp: gwdgCache.rateLimitsData.timestamp,
-				rateLimits: gwdgCache.rateLimitsData.rateLimits,
-				endpoint: "",
-			};
-			const windows = buildRateWindows(cachedData);
+		if (gwdgCache?.gwdgUsageData) {
+			debug("fetchUsage - using cache");
+			const windows = buildRateWindows(gwdgCache.gwdgUsageData);
+			debug("Built windows:", JSON.stringify(windows, null, 2));
 			const windowsWithLiveReset = recalculateResetTimes(windows);
 			debug("fetchUsage - rebuilt windows from cache:", JSON.stringify(windowsWithLiveReset, null, 2));
 			return this.snapshot({ windows: windowsWithLiveReset });
 		}
 
 		// No data yet, return 0 for all windows
-		debug("fetchUsage - no data, returning zeros");
+		debug("fetchUsage - no cache");
+
 		return this.snapshot({
 			windows: [
 				{ label: "minute", usedPercent: 0 },
@@ -275,19 +296,29 @@ export class GwdgProvider extends BaseProvider {
 				{ label: "day", usedPercent: 0 },
 				{ label: "month", usedPercent: 0 },
 			],
+			error: fetchFailed()
 		});
 	}
 
 	async fetchStatus(_deps: Dependencies): Promise<ProviderStatus> {
-		// If we have recent data, provider is working
-		if (globalLastUsageData) {
-			const age = Date.now() - globalLastUsageData.timestamp;
+		// Ensure we're subscribed to events (in case constructor wasn't called with deps)
+		this.ensureSubscribed(_deps);
+
+		debug("fetchStatus called");
+
+		const gwdgCache = getGwdgCache();
+
+		if (gwdgCache?.gwdgUsageData) {
+			debug("fetchStatus - using cache");
+			const age = Date.now() - gwdgCache.gwdgUsageData.timestamp;
 			// Data older than 1 hour might be stale
 			if (age < 60 * 60 * 1000) {
+				debug("fetchStatus - stale cache", age)
 				return { indicator: "none" };
 			}
 		}
 
+		debug("fetchStatus - no cache");
 		// No data yet - unknown status (will show gray indicator)
 		return { indicator: "unknown" };
 	}
