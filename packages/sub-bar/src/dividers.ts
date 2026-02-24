@@ -37,10 +37,13 @@ export function buildDividerLine(
 		const stripped = baseLine.replace(ANSI_REGEX, "");
 		let pos = 0;
 		for (const { segment } of SEGMENTER.segment(stripped)) {
+			// Break if we've gone beyond the line width
 			if (pos >= lineChars.length) break;
+			// Replace the character at the current position if it matches the divider char
 			if (segment === dividerChar) {
 				lineChars[pos] = joinChar;
 			}
+			// Advance position by the visible width of this segment
 			pos += Math.max(1, visibleWidth(segment));
 		}
 	}
