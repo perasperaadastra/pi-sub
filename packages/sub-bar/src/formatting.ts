@@ -348,7 +348,14 @@ function formatProviderLabel(theme: Theme, usage: UsageSnapshot, settings?: Sett
 	const baseName = rawName.replace(/\s+(plan|subscription|sub\.?)[\s]*$/i, "").trim();
 	const resolvedProviderName = baseName || rawName;
 	const isSpark = usage.provider === "codex" && isCodexSparkModel(model);
-	const providerName = isSpark ? `${resolvedProviderName} (Spark)` : resolvedProviderName;
+
+	// For GWDG, include keyId in the provider label (ignore isSpark for GWDG)
+	let providerName: string;
+	if (usage.provider === "gwdg") {
+		providerName = usage.keyId ? `${resolvedProviderName} (${usage.keyId})` : resolvedProviderName;
+	} else {
+		providerName = isSpark ? `${resolvedProviderName} (Spark)` : resolvedProviderName;
+	}
 	const providerLabel = showProviderName
 		? [providerName, labelSuffix].filter(Boolean).join(" ")
 		: "";
