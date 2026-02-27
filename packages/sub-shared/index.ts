@@ -32,6 +32,8 @@ export interface UsageSnapshot {
 	requestsSummary?: string;
 	requestsRemaining?: number;
 	requestsEntitlement?: number;
+	/** Optional key ID for providers that support multiple keys (e.g., GWDG) */
+	keyId?: string;
 }
 
 export type UsageErrorCode =

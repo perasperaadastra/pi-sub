@@ -352,7 +352,9 @@ function formatProviderLabel(theme: Theme, usage: UsageSnapshot, settings?: Sett
 	// For GWDG, include keyId in the provider label (ignore isSpark for GWDG)
 	let providerName: string;
 	if (usage.provider === "gwdg") {
-		providerName = usage.keyId ? `${resolvedProviderName} (${usage.keyId})` : resolvedProviderName;
+		// Show keyId only if it's a non-empty, non-"0" string (treat "", "0", and undefined the same)
+		const hasValidKeyId = usage.keyId && usage.keyId !== "0";
+		providerName = hasValidKeyId ? `${resolvedProviderName} (${usage.keyId})` : resolvedProviderName;
 	} else {
 		providerName = isSpark ? `${resolvedProviderName} (Spark)` : resolvedProviderName;
 	}
