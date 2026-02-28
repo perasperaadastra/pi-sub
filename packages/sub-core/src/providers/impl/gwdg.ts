@@ -248,16 +248,18 @@ function ensureGlobalSubscription(deps: Dependencies): void {
 			const cache = readCache();
 			debug("Initial cache:", JSON.stringify(cache.gwdg, null, 2));
 
+			// pi-gwdg sends keyId as string: "0" for base key, "1", "2", etc. for numbered keys
+			// We store all events by their keyId for later retrieval
+			const eventKeyId = gwdgEventData.keyId ?? "0";
+
 			const usage: UsageSnapshot = {
 				provider: "gwdg",
 				displayName: "GWDG",
 				windows,
-				lastSuccessAt: gwdgEventData.timestamp,
+				lastSuccessAt: Date.now(),
+				keyId: eventKeyId,
 			};
 
-			// pi-gwdg sends keyId as string: "0" for base key, "1", "2", etc. for numbered keys
-			// We store all events by their keyId for later retrieval
-			const eventKeyId = gwdgEventData.keyId ?? "0";
 
 			const existingCacheEntry = cache.gwdg as GwdgCacheEntry | undefined;
 			const existingGwdgEventData = existingCacheEntry?.gwdgEventData ?? {};
