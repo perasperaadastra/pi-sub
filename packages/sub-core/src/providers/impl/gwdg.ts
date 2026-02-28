@@ -23,7 +23,7 @@ interface GwdgRateLimitWindow {
 	remaining: number;
 }
 
-interface GwdgUsageData {
+interface GwdgEventData {
 	timestamp: number;
 	rateLimits: {
 		minute?: GwdgRateLimitWindow;
@@ -33,6 +33,12 @@ interface GwdgUsageData {
 	};
 	resetSeconds?: number;
 	endpoint: string;
+	keyId?: string;
+}
+
+interface GwdgCacheEntry extends CacheEntry {
+	gwdgEventData: Record<string, GwdgEventData>;
+	lastKeyId: string;
 }
 
 const WINDOW_SECONDS = {
@@ -56,25 +62,53 @@ function formatGranularTime(seconds: number, thresholds: number[]): string | nul
 	return null;
 }
 
-function calculateResetSeconds(windowKey: keyof typeof WINDOW_SECONDS): number {
-	if (windowKey === "month") {
-		const now = new Date();
-		const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
-		return Math.floor((endOfMonth.getTime() - now.getTime()) / 1000);
+/**
+ * Get the start of a time window (local time based) for rollover detection
+ */
+function getWindowStart(timestamp: number, windowKey: keyof typeof WINDOW_SECONDS): number {
+	const date = new Date(timestamp);
+
+	switch (windowKey) {
+		case "month":
+			return new Date(date.getFullYear(), date.getMonth(), 1, 0, 0, 0).getTime();
+
+		case "day":
+			return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0).getTime();
+
+		case "hour":
+			return new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours(), 0, 0).getTime();
+
+		case "minute":
+			return new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours(), date.getMinutes(), 0).getTime();
+
+		default:
+			// Fallback to UTC-based calculation for unknown window types
+			const windowDuration = WINDOW_SECONDS[windowKey as keyof typeof WINDOW_SECONDS] || 86400;
+			return Math.floor(timestamp / 1000 / windowDuration) * windowDuration * 1000;
 	}
+}
+
+function calculateResetSeconds(windowKey: keyof typeof WINDOW_SECONDS): number {
+	const now = Date.now();
+	const windowStart = getWindowStart(now, windowKey);
+
+	// For month, we need to calculate next month start since duration varies
+	if (windowKey === "month") {
+		const currentMonthDate = new Date(windowStart);
+		const nextMonthStart = new Date(currentMonthDate.getFullYear(), currentMonthDate.getMonth() + 1, 1, 0, 0, 0, 0).getTime();
+		return Math.max(1, Math.floor((nextMonthStart - now) / 1000));
+	}
+
 	const windowDuration = WINDOW_SECONDS[windowKey];
-	const now = Math.floor(Date.now() / 1000);
-	const secondsIntoWindow = now % windowDuration;
-	return windowDuration - secondsIntoWindow;
+	const secondsElapsed = (now - windowStart) / 1000;
+	// Ensure at least 1 second is returned to avoid undefined reset fields at window boundaries
+	return Math.max(1, Math.floor(windowDuration - secondsElapsed));
 }
 
 function calculateResetFields(
 	windowKey: keyof typeof WINDOW_SECONDS
-): { resetDescription: string; resetAt: string } | undefined {
+): { resetDescription: string; resetAt: string } {
 	const resetSeconds = calculateResetSeconds(windowKey);
-	if (resetSeconds <= 0) {
-		return undefined;
-	}
 	const resetAt = new Date(Date.now() + resetSeconds * 1000);
 	const granular = formatGranularTime(resetSeconds, WINDOW_THRESHOLDS[windowKey]);
 	const resetDescription = granular ?? formatReset(resetAt);
@@ -83,15 +117,37 @@ function calculateResetFields(
 
 /**
  * Recalculate reset times for existing windows (for live countdown)
+ * Also checks for window rollover and resets usedPercent to 0 if needed
  */
-function recalculateResetTimes(windows: RateWindow[]): RateWindow[] {
+function recalculateResetTimes(windows: RateWindow[], dataTimestamp: number): RateWindow[] {
 	return windows.map((window) => {
 		const windowKey = window.label as keyof typeof WINDOW_SECONDS;
-		const resetFields = calculateResetFields(windowKey);
-		if (resetFields) {
-			return { ...window, ...resetFields };
+		let updatedWindow = window;
+
+		// Check for window rollover and reset usedPercent if needed
+		if (windowKey in WINDOW_SECONDS && dataTimestamp > 0) {
+			const isRolledOver = (() => {
+				if (windowKey === "month") {
+					const dataDate = new Date(dataTimestamp);
+					const now = new Date();
+					return dataDate.getMonth() !== now.getMonth() ||
+						dataDate.getFullYear() !== now.getFullYear();
+				}
+				// Use local time-based window starts for rollover detection
+				const dataWindowStart = getWindowStart(dataTimestamp, windowKey);
+				const currentWindowStart = getWindowStart(Date.now(), windowKey);
+				return currentWindowStart > dataWindowStart;
+			})();
+
+			if (isRolledOver) {
+				debug(`recalculateResetTimes: ${windowKey} window rolled over, resetting usedPercent from ${updatedWindow.usedPercent} to 0`);
+				updatedWindow = { ...updatedWindow, usedPercent: 0 };
+			}
 		}
-		return window;
+
+		// Update reset times regardless of rollover
+		const resetFields = calculateResetFields(windowKey);
+		return { ...updatedWindow, ...resetFields };
 	});
 }
 
@@ -99,7 +155,7 @@ function recalculateResetTimes(windows: RateWindow[]): RateWindow[] {
  * Build rate windows from GWDG usage data
  * Note: Reset times are calculated at build time. Use recalculateResetTimes() in fetchUsage for live countdown.
  */
-function buildRateWindows(data: GwdgUsageData): RateWindow[] {
+function buildRateWindows(data: GwdgEventData): RateWindow[] {
 	debug("buildRateWindows called with data:", JSON.stringify(data, null, 2));
 	const windows: RateWindow[] = [];
 
@@ -112,13 +168,13 @@ function buildRateWindows(data: GwdgUsageData): RateWindow[] {
 			debug(`isWindowRolledOver(${windowKey}): dataMonth=${dataDate.getMonth()}, currentMonth=${now.getMonth()}, rolledOver=${rolledOver}`);
 			return rolledOver;
 		}
-		const windowDuration = WINDOW_SECONDS[windowKey];
-		const dataWindowStart = Math.floor(data.timestamp / 1000 / windowDuration) * windowDuration;
-		const currentWindowStart = Math.floor(Date.now() / 1000 / windowDuration) * windowDuration;
+		// Use local time-based window starts for rollover detection
+		const dataWindowStart = getWindowStart(data.timestamp, windowKey);
+		const currentWindowStart = getWindowStart(Date.now(), windowKey);
 
 		const rolledOver = currentWindowStart > dataWindowStart;
 
-		debug(`isWindowRolledOver(${windowKey}): dataWindowStart=${dataWindowStart}, currentWindowStart=${currentWindowStart}, rolledOver=${rolledOver}`);
+		debug(`isWindowRolledOver(${windowKey}): dataWindowStart=${new Date(dataWindowStart).toISOString()}, currentWindowStart=${new Date(currentWindowStart).toISOString()}, rolledOver=${rolledOver}`);
 		return rolledOver;
 	};
 
@@ -181,12 +237,12 @@ function ensureGlobalSubscription(deps: Dependencies): void {
 	// Subscribe to usage updates from pi-gwdg
 	globalEventUnsubscribe = deps.pi.events.on("gwdg:usage:update", (data: unknown) => {
 		debug("GWDG EVENT RECEIVED!");
-		const gwdgUsageData = data as GwdgUsageData;
-		debug("Received event data:", JSON.stringify(gwdgUsageData, null, 2));
+		const gwdgEventData = data as GwdgEventData;
+		debug("Received event data:", JSON.stringify(gwdgEventData, null, 2));
 
 		// Update the cache with the received data so it persists across session/model changes
 		try {
-			const windows = buildRateWindows(gwdgUsageData);
+			const windows = buildRateWindows(gwdgEventData);
 			debug("Built windows:", JSON.stringify(windows, null, 2));
 
 			const cache = readCache();
@@ -196,17 +252,26 @@ function ensureGlobalSubscription(deps: Dependencies): void {
 				provider: "gwdg",
 				displayName: "GWDG",
 				windows,
-				lastSuccessAt: Date.now(),
+				lastSuccessAt: gwdgEventData.timestamp,
 			};
 
-			const existingCacheEntry = cache.gwdg;
-			const newCacheEntry: CacheEntry & {
-				gwdgUsageData: GwdgUsageData;
-			} = {
-				fetchedAt: gwdgUsageData.timestamp,
+			// pi-gwdg sends keyId as string: "0" for base key, "1", "2", etc. for numbered keys
+			// We store all events by their keyId for later retrieval
+			const eventKeyId = gwdgEventData.keyId ?? "0";
+
+			const existingCacheEntry = cache.gwdg as GwdgCacheEntry | undefined;
+			const existingGwdgEventData = existingCacheEntry?.gwdgEventData ?? {};
+
+			// Create new cache entry with updated data
+			const newCacheEntry: GwdgCacheEntry = {
+				fetchedAt: gwdgEventData.timestamp,
 				status: existingCacheEntry?.status,
 				usage,
-				gwdgUsageData: gwdgUsageData
+				gwdgEventData: {
+					...existingGwdgEventData,
+					[eventKeyId]: gwdgEventData,
+				},
+				lastKeyId: eventKeyId,
 			};
 			cache.gwdg = newCacheEntry;
 			debug("Updated cache:", JSON.stringify(cache.gwdg, null, 2));
@@ -238,10 +303,14 @@ export function unsubscribeGlobalGwdg(): void {
 	}
 }
 
-function getGwdgCache() {
+function getGwdgCache(): GwdgCacheEntry | undefined {
 	debug("getGwdgCache called");
 	const cache = readCache();
-	return cache.gwdg as CacheEntry & {gwdgUsageData: GwdgUsageData} | undefined;
+	const entry = cache.gwdg;
+	if (!entry || !("gwdgEventData" in entry)) {
+		return undefined;
+	}
+	return entry as GwdgCacheEntry;
 }
 
 export class GwdgProvider extends BaseProvider {
@@ -277,13 +346,21 @@ export class GwdgProvider extends BaseProvider {
 		const gwdgCache = getGwdgCache();
 		debug("gwdgCache:", JSON.stringify(gwdgCache, null, 2));
 
-		if (gwdgCache?.gwdgUsageData) {
-			debug("fetchUsage - using cache");
-			const windows = buildRateWindows(gwdgCache.gwdgUsageData);
-			debug("Built windows:", JSON.stringify(windows, null, 2));
-			const windowsWithLiveReset = recalculateResetTimes(windows);
-			debug("fetchUsage - rebuilt windows from cache:", JSON.stringify(windowsWithLiveReset, null, 2));
-			return this.snapshot({ windows: windowsWithLiveReset });
+		if (gwdgCache) {
+			const lastGwdgData = gwdgCache.gwdgEventData[gwdgCache.lastKeyId];
+			if (lastGwdgData) {
+				debug(`fetchUsage - using cache for keyId: ${gwdgCache.lastKeyId}`);
+				const windows = buildRateWindows(lastGwdgData);
+				debug("Built windows:", JSON.stringify(windows, null, 2));
+				const windowsWithLiveReset = recalculateResetTimes(windows, lastGwdgData.timestamp);
+				debug("fetchUsage - rebuilt windows from cache:", JSON.stringify(windowsWithLiveReset, null, 2));
+				// Include keyId in snapshot for display in the provider label
+				return this.snapshot({
+					windows: windowsWithLiveReset,
+					keyId: lastGwdgData.keyId,
+					lastSuccessAt: lastGwdgData.timestamp,
+				});
+			}
 		}
 
 		// No data yet, return 0 for all windows
@@ -308,13 +385,17 @@ export class GwdgProvider extends BaseProvider {
 
 		const gwdgCache = getGwdgCache();
 
-		if (gwdgCache?.gwdgUsageData) {
-			debug("fetchStatus - using cache");
-			const age = Date.now() - gwdgCache.gwdgUsageData.timestamp;
-			// Data older than 1 hour might be stale
-			if (age < 60 * 60 * 1000) {
-				debug("fetchStatus - stale cache", age)
-				return { indicator: "none" };
+		if (gwdgCache) {
+			const lastGwdgData = gwdgCache.gwdgEventData[gwdgCache.lastKeyId];
+			if (lastGwdgData) {
+				debug("fetchStatus - using cache");
+				const age = Date.now() - lastGwdgData.timestamp;
+				// Data older than 1 minute might be stale
+				if (age < 60 * 1000) {
+					debug("fetchStatus - fresh cache", age);
+					return { indicator: "none" };
+				}
+				debug("fetchStatus - stale cache", age);
 			}
 		}
 
