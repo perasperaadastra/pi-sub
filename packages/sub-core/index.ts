@@ -457,7 +457,12 @@ export default function createExtension(pi: ExtensionAPI, deps: Dependencies = c
 	pi.on("session_start", async (_event, ctx) => {
 		lastContext = ctx;
 		ensureSettingsLoaded();
-		void refresh(ctx, { allowStaleCache: true, skipFetch: true });
+		// This ensures stale cache data gets proper reset time calculations
+		if (settings.providerOrder.includes("gwdg")) {
+			void refresh(ctx, { allowStaleCache: true });
+		} else {
+			void refresh(ctx, { allowStaleCache: true, skipFetch: true });
+		}
 		void refreshStatus(ctx, { allowStaleCache: true, skipFetch: true });
 		pi.events.emit("sub-core:ready", { state: lastState, settings });
 	});
